@@ -107,8 +107,17 @@ class WebAllStationTimestampsExporter:
                 # If no valid end times, use the original list
                 valid_visits = visits
             
-            # Sort by end time (most recent last)
-            sorted_visits = sorted(valid_visits, key=lambda x: x['end'] if x['end'] else '')
+            # Sort by end time (most recent last) - parse as datetime for proper sorting
+            def parse_timestamp(ts_str):
+                """Parse ISO timestamp for sorting"""
+                if not ts_str:
+                    return datetime.min
+                try:
+                    return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                except (ValueError, AttributeError):
+                    return datetime.min
+            
+            sorted_visits = sorted(valid_visits, key=lambda x: parse_timestamp(x['end']))
             
             # Get the last (most recent) visit
             last_visit = sorted_visits[-1]
