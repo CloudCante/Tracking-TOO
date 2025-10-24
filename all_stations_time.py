@@ -100,8 +100,18 @@ class WebAllStationTimestampsExporter:
         }
         
         for station_name, visits in stations.items():
+            # Sort visits by end_time to ensure we get the most recent
+            # Filter out visits with no end_time, then sort
+            valid_visits = [v for v in visits if v['end']]
+            if not valid_visits:
+                # If no valid end times, use the original list
+                valid_visits = visits
+            
+            # Sort by end time (most recent last)
+            sorted_visits = sorted(valid_visits, key=lambda x: x['end'] if x['end'] else '')
+            
             # Get the last (most recent) visit
-            last_visit = visits[-1]
+            last_visit = sorted_visits[-1]
             result['stations'][station_name] = {
                 'start': last_visit['start'],
                 'end': last_visit['end']
