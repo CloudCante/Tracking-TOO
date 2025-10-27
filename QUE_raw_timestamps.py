@@ -35,6 +35,15 @@ class WebRawTimestampsExporter:
         self.api_base_url = api_base_url
         self.session = requests.Session()
     
+    def parse_timestamp(self, ts_str):
+        """Parse ISO timestamp for sorting"""
+        if not ts_str:
+            return datetime.min
+        try:
+            return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            return datetime.min
+    
     def get_serial_history(self, serial_numbers: List[str], start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict:
         """
         Get production history for serial numbers from the API
@@ -59,7 +68,9 @@ class WebRawTimestampsExporter:
     
     def process_raw_timestamps(self, serial_number: str, history_data: List[Dict]) -> Dict:
         """
-        Process the raw timestamps for a serial number (same logic as original script)
+        Process the raw timestamps for a serial number for the most recent cycle only.
+        A cycle is determined by the most recent RECEIVE station timestamp.
+        Only stations from that receiving time onwards are included.
         """
         if not history_data:
             return {
@@ -99,6 +110,35 @@ class WebRawTimestampsExporter:
                 'shipping_start': None
             }
         
+        # Find the most recent RECEIVE station start time to identify the current cycle
+        receive_records = [
+            record for record in workstation_data 
+            if record.get('workstation_name') == 'RECEIVE'
+        ]
+        
+        most_recent_receive_time = None
+        if receive_records:
+            # Sort by start time to get the most recent RECEIVE
+            sorted_receives = sorted(
+                receive_records, 
+                key=lambda x: self.parse_timestamp(x.get('history_station_start_time'))
+            )
+            most_recent_receive = sorted_receives[-1]
+            most_recent_receive_time = self.parse_timestamp(most_recent_receive.get('history_station_start_time'))
+            
+            print(f"  [{serial_number}] Most recent RECEIVE: {most_recent_receive.get('history_station_start_time')}")
+            
+            # Filter workstation_data to only include records from this cycle onwards
+            # (records that started at or after the most recent RECEIVE start time)
+            workstation_data = [
+                record for record in workstation_data
+                if self.parse_timestamp(record.get('history_station_start_time')) >= most_recent_receive_time
+            ]
+            
+            print(f"  [{serial_number}] Filtered to {len(workstation_data)} station records for current cycle")
+        else:
+            print(f"  [{serial_number}] No RECEIVE station found - using all historical data")
+        
         # Build a dictionary of station times (with lists for multiple occurrences)
         stations = {}
         for record in workstation_data:
@@ -130,7 +170,12 @@ class WebRawTimestampsExporter:
         
         # 1. VI1 end time and next station start time
         if 'VI1' in stations:
-            vi1_end = stations['VI1'][-1]['end']  # MOST RECENT occurrence
+            # Sort VI1 visits by end time to get the truly most recent one
+            vi1_visits = sorted(
+                stations['VI1'], 
+                key=lambda x: self.parse_timestamp(x['end'])
+            )
+            vi1_end = vi1_visits[-1]['end']  # MOST RECENT occurrence
             result['vi1_end'] = vi1_end
             
             # Find the next station after VI1's MOST RECENT occurrence
@@ -227,7 +272,12 @@ class WebRawTimestampsExporter:
         
         # 4. Packing end time and Shipping start time
         if 'PACKING' in stations:
-            packing_end = stations['PACKING'][-1]['end']  # MOST RECENT occurrence
+            # Sort PACKING visits by end time to get the truly most recent one
+            packing_visits = sorted(
+                stations['PACKING'], 
+                key=lambda x: self.parse_timestamp(x['end'])
+            )
+            packing_end = packing_visits[-1]['end']  # MOST RECENT occurrence
             result['packing_end'] = packing_end
             
             if 'SHIPPING' in stations:
