@@ -57,9 +57,20 @@ class WebAllStationTimestampsExporter:
             print(f"API request failed: {e}")
             return {"success": False, "error": str(e)}
     
+    def parse_timestamp(self, ts_str):
+        """Parse ISO timestamp for sorting"""
+        if not ts_str:
+            return datetime.min
+        try:
+            return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            return datetime.min
+    
     def process_all_station_timestamps(self, serial_number: str, history_data: List[Dict]) -> Dict:
         """
-        Process all station timestamps for a serial number (same logic as original script)
+        Process all station timestamps for a serial number for the most recent cycle only.
+        A cycle is determined by the most recent RECEIVE station timestamp.
+        Only stations from that receiving time onwards are included.
         """
         if not history_data:
             return {
@@ -79,6 +90,35 @@ class WebAllStationTimestampsExporter:
                 'stations': {}
             }
         
+        # Find the most recent RECEIVE station start time to identify the current cycle
+        receive_records = [
+            record for record in workstation_data 
+            if record.get('workstation_name') == 'RECEIVE'
+        ]
+        
+        most_recent_receive_time = None
+        if receive_records:
+            # Sort by start time to get the most recent RECEIVE
+            sorted_receives = sorted(
+                receive_records, 
+                key=lambda x: self.parse_timestamp(x.get('history_station_start_time'))
+            )
+            most_recent_receive = sorted_receives[-1]
+            most_recent_receive_time = self.parse_timestamp(most_recent_receive.get('history_station_start_time'))
+            
+            print(f"  [{serial_number}] Most recent RECEIVE: {most_recent_receive.get('history_station_start_time')}")
+            
+            # Filter workstation_data to only include records from this cycle onwards
+            # (records that started at or after the most recent RECEIVE start time)
+            workstation_data = [
+                record for record in workstation_data
+                if self.parse_timestamp(record.get('history_station_start_time')) >= most_recent_receive_time
+            ]
+            
+            print(f"  [{serial_number}] Filtered to {len(workstation_data)} station records for current cycle")
+        else:
+            print(f"  [{serial_number}] No RECEIVE station found - using all historical data")
+        
         # Build dictionary of stations (with lists for multiple visits)
         stations = {}
         for record in workstation_data:
@@ -93,7 +133,7 @@ class WebAllStationTimestampsExporter:
                 'end': end_time
             })
         
-        # Use MOST RECENT visit for each station
+        # Use MOST RECENT visit for each station (within the current cycle)
         result = {
             'serial_number': serial_number,
             'stations': {}
@@ -107,17 +147,8 @@ class WebAllStationTimestampsExporter:
                 # If no valid end times, use the original list
                 valid_visits = visits
             
-            # Sort by end time (most recent last) - parse as datetime for proper sorting
-            def parse_timestamp(ts_str):
-                """Parse ISO timestamp for sorting"""
-                if not ts_str:
-                    return datetime.min
-                try:
-                    return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
-                except (ValueError, AttributeError):
-                    return datetime.min
-            
-            sorted_visits = sorted(valid_visits, key=lambda x: parse_timestamp(x['end']))
+            # Sort by end time (most recent last)
+            sorted_visits = sorted(valid_visits, key=lambda x: self.parse_timestamp(x['end']))
             
             # Get the last (most recent) visit
             last_visit = sorted_visits[-1]
