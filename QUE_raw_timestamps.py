@@ -207,44 +207,82 @@ class WebRawTimestampsExporter:
             result['vi1_next_start'] = next_station_start
             
             # 2. Continue following the SAME cycle
+            matching_upgrade = None
+            
             if next_station_name == 'UPGRADE':
                 # Find the specific UPGRADE that matches the start time we found
-                matching_upgrade = None
                 for upgrade_time in stations['UPGRADE']:
                     if upgrade_time['start'] == next_station_start:
                         matching_upgrade = upgrade_time
                         break
+            
+            elif next_station_name == 'Disassembly':
+                # Follow the path: Disassembly → Assembley → UPGRADE
+                # Find the specific Disassembly that matches the start time we found
+                matching_disassembly = None
+                for disassembly_time in stations['Disassembly']:
+                    if disassembly_time['start'] == next_station_start:
+                        matching_disassembly = disassembly_time
+                        break
                 
-                if matching_upgrade:
-                    result['upgrade_end'] = matching_upgrade['end']
+                if matching_disassembly:
+                    disassembly_end = matching_disassembly['end']
                     
-                    # Look for BBD OR ASSY1 after THIS specific UPGRADE
-                    candidates = []
-                    
-                    if 'BBD' in stations:
-                        for bbd_time in stations['BBD']:
-                            if bbd_time['start'] and matching_upgrade['end'] and bbd_time['start'] > matching_upgrade['end']:
-                                candidates.append(('BBD', bbd_time['start'], bbd_time['end']))
-                                break
-                    
-                    if 'ASSY1' in stations:
-                        for assy1_time in stations['ASSY1']:
-                            if assy1_time['start'] and matching_upgrade['end'] and assy1_time['start'] > matching_upgrade['end']:
-                                candidates.append(('ASSY1', assy1_time['start'], assy1_time['end']))
-                                break
-                    
+                    # Find Assembley after Disassembly
+                    matching_assembley = None
                     if 'Assembley' in stations:
                         for assembley_time in stations['Assembley']:
-                            if assembley_time['start'] and matching_upgrade['end'] and assembley_time['start'] > matching_upgrade['end']:
-                                candidates.append(('Assembley', assembley_time['start'], assembley_time['end']))
+                            if assembley_time['start'] and disassembly_end and assembley_time['start'] > disassembly_end:
+                                matching_assembley = assembley_time
                                 break
                     
-                    # Pick whichever comes first chronologically
-                    if candidates:
-                        candidates.sort(key=lambda x: x[1])  # Sort by start time
-                        result['bbd_assy_station'] = candidates[0][0]
-                        result['bbd_assy_start'] = candidates[0][1]
-                        result['bbd_assy_end'] = candidates[0][2]
+                    # Find UPGRADE after Assembley (or after Disassembly if no Assembley)
+                    if matching_assembley:
+                        assembley_end = matching_assembley['end']
+                        if 'UPGRADE' in stations:
+                            for upgrade_time in stations['UPGRADE']:
+                                if upgrade_time['start'] and assembley_end and upgrade_time['start'] > assembley_end:
+                                    matching_upgrade = upgrade_time
+                                    break
+                    else:
+                        # If no Assembley, look for UPGRADE directly after Disassembly
+                        if 'UPGRADE' in stations:
+                            for upgrade_time in stations['UPGRADE']:
+                                if upgrade_time['start'] and disassembly_end and upgrade_time['start'] > disassembly_end:
+                                    matching_upgrade = upgrade_time
+                                    break
+            
+            # Now handle UPGRADE end time and continue to BBD/ASSY1
+            if matching_upgrade:
+                result['upgrade_end'] = matching_upgrade['end']
+                
+                # Look for BBD OR ASSY1 after THIS specific UPGRADE
+                candidates = []
+                
+                if 'BBD' in stations:
+                    for bbd_time in stations['BBD']:
+                        if bbd_time['start'] and matching_upgrade['end'] and bbd_time['start'] > matching_upgrade['end']:
+                            candidates.append(('BBD', bbd_time['start'], bbd_time['end']))
+                            break
+                
+                if 'ASSY1' in stations:
+                    for assy1_time in stations['ASSY1']:
+                        if assy1_time['start'] and matching_upgrade['end'] and assy1_time['start'] > matching_upgrade['end']:
+                            candidates.append(('ASSY1', assy1_time['start'], assy1_time['end']))
+                            break
+                
+                if 'Assembley' in stations:
+                    for assembley_time in stations['Assembley']:
+                        if assembley_time['start'] and matching_upgrade['end'] and assembley_time['start'] > matching_upgrade['end']:
+                            candidates.append(('Assembley', assembley_time['start'], assembley_time['end']))
+                            break
+                
+                # Pick whichever comes first chronologically
+                if candidates:
+                    candidates.sort(key=lambda x: x[1])  # Sort by start time
+                    result['bbd_assy_station'] = candidates[0][0]
+                    result['bbd_assy_start'] = candidates[0][1]
+                    result['bbd_assy_end'] = candidates[0][2]
         
         # 3. BBD/ASSY1 end time and FLA/CHIFLASH start time
         if result['bbd_assy_station'] and result['bbd_assy_end']:
